@@ -23,14 +23,22 @@ reg, _ := templator.NewRegistry[PageData](
 Keep in mind that `embed.FS` roots are the package directory, and
 `os.DirFS(dir)` roots are `dir` — the same `templates/home.html` file is
 addressed as `"templates/home.html"` from one and `"home.html"` from the
-other. templator always prepends the templates path and cannot be pointed
-at the FS root itself (an empty `WithTemplatesPath` is ignored); if you
-want lookups relative to a subdirectory, hand the registry that subtree
-instead:
+other. templator always prepends the templates path, and an empty
+`WithTemplatesPath` is ignored, so there is no root-relative mode:
+whatever `fs.FS` you hand the registry must contain a directory literally
+named `templates` — or the value of `WithTemplatesPath` — directly under
+its root. If your templates live at `web/templates/` inside the
+filesystem you have, bracket the *parent*, not the templates directory:
 
 ```go
-sub, _ := fs.Sub(fsys, "templates")
-reg, _ := templator.NewRegistry[HomeData](sub) // Get("home") → templates/home.html
+// fsys layout: web/templates/home.html
+sub, _ := fs.Sub(fsys, "web")    // parent of the templates dir
+reg, _ := templator.NewRegistry[HomeData](sub)
+
+home, _ := reg.Get("home")       // resolves to web/templates/home.html
+
+// fs.Sub(fsys, "templates") would NOT work here: the registry would
+// look for web/templates/templates/home.html and fail with an fs error.
 ```
 
 ## The three filesystems you will actually use
