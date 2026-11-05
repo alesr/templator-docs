@@ -37,8 +37,8 @@ reg, _ := templator.NewRegistry[HomeData](sub)
 
 home, _ := reg.Get("home")       // resolves to web/templates/home.html
 
-// fs.Sub(fsys, "templates") would NOT work here: the registry would
-// look for web/templates/templates/home.html and fail with an fs error.
+// fs.Sub(fsys, "web/templates") would NOT work here: the registry
+// would look for web/templates/templates/home.html and fail with an fs error.
 ```
 
 ## The three filesystems you will actually use
