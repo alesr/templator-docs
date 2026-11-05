@@ -71,13 +71,18 @@ happen at startup or first render — see [Errors](/templator-docs/reference/err
 
 ## Why does validation miss my field reference?
 
-The validator deliberately checks three shapes only:
-`{{.Field}}`, `{{ .A.B }}`, and `{{if .Field}}`. References inside other
-actions — `{{range .Items}}`, pipelines such as `{{.Title | upper}}`, and
-includes — are not extracted, and a template containing only those shapes
-passes validation unhindered. This keeps validation free of false
-positives at the cost of full coverage; the exact list is in [Field
-validation](/templator-docs/concepts/field-validation/).
+The validator checks three whole-action shapes only: `{{.Field}}`,
+`{{ .A.B }}`, and `{{if .Field}}`. References inside other actions —
+`{{range .Items}}`, pipelines such as `{{.Title | upper}}`, includes — are
+not extracted, so a template using only those passes validation unhindered.
+
+More importantly, the check has real limits beyond plain struct fields:
+a call like `{{.Footer}}` where `Footer` is a method is wrongfully
+rejected, and a path like `{{.Meta.Key}}` through a map field currently
+panics the load. In short, validation is dependable for exported struct
+fields, nested structs, and pointer chains — drop
+`WithFieldValidation` for templates that call methods or walk into maps.
+The full list is in [Field validation](/templator-docs/concepts/field-validation/).
 
 ## Can I use one data type for all templates?
 

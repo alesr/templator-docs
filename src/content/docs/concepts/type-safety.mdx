@@ -89,8 +89,8 @@ _, err = reg.Get("article")
 Validation runs once per template, when it is first loaded — so it catches
 mismatches at startup or first render instead of mid-page in production. It
 covers whole-action field references like `{{.Title}}`, `{{ .User.Name }}`,
-and `{{if .User.Admin}}`. It is a deliberately narrow, low-false-positive
-check; the exact coverage and its limits are in
+and `{{if .User.Admin}}`. It is a narrow check with sharp edges outside the
+plain-struct subset — the exact coverage and its limits are in
 [Field validation](/templator-docs/concepts/field-validation/).
 
 ## The hierarchy of safety

@@ -82,25 +82,50 @@ The data type itself must be a struct (or a pointer to one). A registry
 whose `T` is, say, a map or a slice is rejected at `Get` time with a
 validation error like `expected struct type, got map`.
 
-## What it deliberately does not check
+## What it does not check — and where it is wrong
 
-The extractor is intentionally narrow — it matches the three patterns above
-and nothing else. These **are not validated**:
+The extractor matches the three patterns above and nothing else. These
+constructs are **not checked at all**:
 
 - `{{range .Items}}` and `{{with .X}}` (fields inside them are not extracted
   unless they also appear as one of the three covered shapes)
 - Pipelines such as `{{.Title | upper}}`
-- Method calls, variables (`$x`), and computed expressions
-- `{{template "partial" .}}` includes
+- Variables (`$x`), computed expressions, and `{{template "partial" .}}`
+  includes
 
-Two consequences follow:
+Templates using only these constructs pass validation unhindered — silence
+is the worst case for them.
 
-1. Validation never reports false positives from constructs it cannot
-   understand — silence is the worst case, never a wrong error.
-2. It is a net, not a proof. A template that only uses `{{range .Items}}`
-   passes validation even if `Items` is missing; the failure would still
-   surface at render time, exactly like plain `html/template`.
+Three covered or adjacent shapes behave incorrectly today, confirmed against
+the implementation:
 
-A practical pairing: use field validation for whole-action references
-(the most common template style), and keep your regression tests exercising
-real renders — see [Test templates](/templator-docs/guides/testing-templates/).
+1. **Method calls inside covered shapes are rejected.** `{{.Footer}}` where
+   `Footer` is a *method* (not a field) matches the pattern, but the check
+   looks at struct fields only, so `Get` fails with a validation error for a
+   template that renders fine:
+
+   ```text
+   template 't' validation error: 'Footer' - 'field 'Footer' not found in type Data'
+   ```
+
+   If your templates call methods, do not enable `WithFieldValidation` for
+   those registries.
+2. **Dotted paths through non-struct fields currently panic.** A path like
+   `{{.Meta.Key}}` where `Meta` is a map (or slice, or interface) passes the
+   regex but the path walk calls `FieldByName` on a non-struct type,
+   crashing `Get` without the error return:
+
+   ```text
+   panic: reflect: FieldByName of non-struct type map[string]string
+   ```
+
+   Keep validated templates to plain nested structs and pointer chains.
+3. **Unexported fields pass validation but fail to render.** A template
+   referencing `{{.title}}` (unexported) loads cleanly, then fails at
+   `Execute` — a false negative within the covered shapes.
+
+In short: for the safe subset — exported struct fields, nested structs,
+pointer chains — validation is dependable; outside that subset it is
+anything from silent to outright wrong. Drop `WithFieldValidation` for any
+template that calls methods or walks into maps, and keep regression tests
+exercising real renders ([Test templates](/templator-docs/guides/testing-templates/)).

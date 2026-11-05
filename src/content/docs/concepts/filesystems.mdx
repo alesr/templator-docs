@@ -23,7 +23,15 @@ reg, _ := templator.NewRegistry[PageData](
 Keep in mind that `embed.FS` roots are the package directory, and
 `os.DirFS(dir)` roots are `dir` — the same `templates/home.html` file is
 addressed as `"templates/home.html"` from one and `"home.html"` from the
-other.
+other. templator always prepends the templates path and cannot be pointed
+at the FS root itself (an empty `WithTemplatesPath` is ignored); if you
+want lookups relative to a subdirectory, hand the registry that subtree
+instead:
+
+```go
+sub, _ := fs.Sub(fsys, "templates")
+reg, _ := templator.NewRegistry[HomeData](sub) // Get("home") → templates/home.html
+```
 
 ## The three filesystems you will actually use
 
@@ -55,14 +63,19 @@ var templateFS embed.FS
 reg, _ := templator.NewRegistry[HomeData](templateFS)
 ```
 
-Embedding the directory (as above) includes its files recursively. Since
-`embed.FS` is rooted at the declaring package, the registry also needs the
-path adjusted:
+Embedding the directory (as above) includes its files recursively. The
+embed FS is rooted at the declaring package, so the file lands at
+`templates/home.html` — which is exactly the registry's default path, so
+no option is needed. You only need `WithTemplatesPath` when the embedded
+root is not called `templates`, for example:
 
 ```go
+//go:embed html
+var templateFS embed.FS
+
 reg, _ := templator.NewRegistry[HomeData](
 	templateFS,
-	templator.WithTemplatesPath[HomeData]("templates"),
+	templator.WithTemplatesPath[HomeData]("html"),
 )
 ```
 

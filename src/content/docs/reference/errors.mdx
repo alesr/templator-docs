@@ -24,7 +24,10 @@ func (e ErrTemplateExecution) Unwrap() error // returns Err
 Returned by `Handler.Execute` for **every** failure it reports: render
 errors, and context cancellation or expiry at any of the checked
 boundaries (before rendering via the first write, on each write, and after
-rendering). Because it wraps the cause:
+rendering). `Name` is the internal template name — the registry name plus
+the `.html` extension (`"home.html"` for `Get("home")`); note this differs
+from `ValidationError.TemplateName`, which carries the bare registry name
+(`"home"`). Because it wraps the cause:
 
 ```go
 err := home.Execute(ctx, w, HomeData{Title: "Hi"})
