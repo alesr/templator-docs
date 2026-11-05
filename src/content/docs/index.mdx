@@ -9,14 +9,15 @@ hero:
       link: /templator-docs/quickstart/
       icon: right-arrow
       variant: primary
-    - text: The type-safety model
-      link: /templator-docs/concepts/type-safety/
-      icon: right-arrow
+    - text: GitHub repository
+      link: https://github.com/alesr/templator
+      icon: github
 ---
 
 templator is a thin, type-safe wrapper around Go's standard `html/template`
 package. You keep writing plain `.html` template files; templator makes the
-data you pass to them a compile-time contract.
+data you pass to them a compile-time contract. The source code lives at
+[github.com/alesr/templator](https://github.com/alesr/templator) (MIT).
 
 ```go
 type HomeData struct {
