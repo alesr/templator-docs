@@ -1,0 +1,106 @@
+---
+title: Field validation
+description: How WithFieldValidation checks template field references against your data type at load time, and exactly which template patterns it covers.
+---
+
+Field validation is the optional net between "type-safe in Go" and "template
+may still reference a field that does not exist". Enable it and templator
+verifies, when a template is first loaded, that the fields it references
+exist in the data type.
+
+## Enable it
+
+```go
+type ArticleData struct {
+	Title   string
+	Content string
+}
+
+reg, err := templator.NewRegistry[ArticleData](
+	fsys,
+	templator.WithFieldValidation(ArticleData{}),
+)
+
+_, err = reg.Get("article")
+```
+
+You pass an instance of the data type (`ArticleData{}`). It is only used to
+bind the type parameter — the registry derives the type from `T`; the value's
+contents are irrelevant. A zero value is conventional.
+
+## When it runs
+
+Validation happens **once per template, at first `Get`**, before the content
+is parsed. This order matters:
+
+- A field mismatch fails the `Get` call with a `*templator.ValidationError`
+  — typically at startup or on the first render of the template.
+- Templates are cached, so the cost is paid once, not per render.
+- Templates that reference only valid fields behave exactly as without
+  validation. There is no runtime overhead once a template is cached.
+
+## What it checks
+
+Validation extracts field references from the template source and walks each
+one against the reflected type of `T` (following nested structs and
+dereferencing pointers). Three shapes of reference are extracted:
+
+```go
+// 1. Whole-action field references, with optional whitespace:
+{{.Title}}
+{{ .Title }}
+
+// 2. Nested field paths, dotted:
+{{.User.Name}}
+
+// 3. Fields inside an if header:
+{{if .User.Admin}}...{{end}}
+```
+
+For each reference, templator checks that the path resolves in the data
+type. In the example above, `ArticleData` must have a `Title` field, and
+`User.Name` must resolve through a struct (or pointer-to-struct) field
+`User` with a field `Name`. A missing field produces:
+
+```text
+template 'article' validation error: 'Author' - field 'Author' not found in type ArticleData
+```
+
+`*ValidationError` carries the pieces for programmatic checks — the
+`Err` field holds the per-field cause, as detailed in
+[Errors](/templator-docs/reference/errors/):
+
+```go
+type ValidationError struct {
+	TemplateName string
+	FieldPath    string
+	Err          error
+}
+```
+
+The data type itself must be a struct (or a pointer to one). A registry
+whose `T` is, say, a map or a slice is rejected at `Get` time with a
+validation error like `expected struct type, got map`.
+
+## What it deliberately does not check
+
+The extractor is intentionally narrow — it matches the three patterns above
+and nothing else. These **are not validated**:
+
+- `{{range .Items}}` and `{{with .X}}` (fields inside them are not extracted
+  unless they also appear as one of the three covered shapes)
+- Pipelines such as `{{.Title | upper}}`
+- Method calls, variables (`$x`), and computed expressions
+- `{{template "partial" .}}` includes
+
+Two consequences follow:
+
+1. Validation never reports false positives from constructs it cannot
+   understand — silence is the worst case, never a wrong error.
+2. It is a net, not a proof. A template that only uses `{{range .Items}}`
+   passes validation even if `Items` is missing; the failure would still
+   surface at render time, exactly like plain `html/template`.
+
+A practical pairing: use field validation for whole-action references
+(the most common template style), and keep your regression tests exercising
+real renders — see [Test templates](/templator-docs/guides/testing-templates/).

@@ -1,0 +1,144 @@
+---
+title: Errors
+description: The error types templator returns — ErrTemplateExecution, ErrTemplateNotFound, ErrNilContext, and ValidationError — and how to check them with errors.Is and errors.As.
+---
+
+templator buckets all rendering failures into one type,
+`ErrTemplateExecution`, which wraps the underlying cause and supports
+`errors.Is` and `errors.As` through `Unwrap`. Load-time failures come from
+the filesystem or `html/template` directly, except field validation, which
+returns `*ValidationError`.
+
+## ErrTemplateExecution
+
+```go
+type ErrTemplateExecution struct {
+	Name string
+	Err  error
+}
+
+func (e ErrTemplateExecution) Error() string // "failed to execute template '<name>': '<cause>'"
+func (e ErrTemplateExecution) Unwrap() error // returns Err
+```
+
+Returned by `Handler.Execute` for **every** failure it reports: render
+errors, and context cancellation or expiry at any of the checked
+boundaries (before rendering via the first write, on each write, and after
+rendering). Because it wraps the cause:
+
+```go
+err := home.Execute(ctx, w, HomeData{Title: "Hi"})
+
+var execErr templator.ErrTemplateExecution
+if errors.As(err, &execErr) {
+	// execErr.Name — which template failed
+	// execErr.Err — why; check with errors.Is:
+	if errors.Is(execErr.Err, context.Canceled) {
+		// client went away
+	}
+	if errors.Is(execErr.Err, context.DeadlineExceeded) {
+		// render exceeded the deadline
+	}
+}
+```
+
+Note the value-receiver `Error()` on a struct type: use
+`errors.As(err, &execErr)` with a non-pointer target, as above.
+
+## ErrNilContext
+
+```go
+var ErrNilContext = errors.New("nil context")
+```
+
+`Execute(ctx, ...)` with a `ctx == nil` fails immediately with
+`ErrTemplateExecution{Name, Err: ErrNilContext}` before any rendering.
+Detectable as:
+
+```go
+if errors.Is(err, templator.ErrNilContext) { /* ctx was nil */ }
+```
+
+In idiomatic Go you always pass a real context — `context.Background()`
+for scripts, `r.Context()` in servers — so this error mainly guards against
+accidental nils in library code.
+
+## ErrTemplateNotFound
+
+```go
+type ErrTemplateNotFound struct {
+	Name string
+}
+
+func (e ErrTemplateNotFound) Error() string // "template '<name>' not found"
+```
+
+Defined for downstream error contracts, but **not currently returned by
+templator itself**: a missing template surfaces at `Get` as the raw error
+from the underlying `fs.FS` read (typically `*fs.PathError`). Do not gate
+behavior on receiving this type today — check for the fs error instead,
+and treat this type as reserved.
+
+## ValidationError
+
+```go
+type ValidationError struct {
+	TemplateName string
+	FieldPath    string
+	Err          error
+}
+
+func (e *ValidationError) Error() string // "template '<name>' validation error: '<field path>' - '<cause>'"
+```
+
+Returned by `Registry.Get` — not by `Execute` — when
+[field validation](/templator-docs/concepts/field-validation/) is enabled
+and a template references a field that does not resolve in `T`:
+
+```go
+_, err := reg.Get("article")
+
+var vErr *templator.ValidationError
+if errors.As(err, &vErr) {
+	log.Printf("template %q references missing field %q", vErr.TemplateName, vErr.FieldPath)
+}
+```
+
+(Pointer receiver — bind with `errors.As(err, &vErr)` on a pointer
+target.)
+
+## Other errors that Get returns
+
+`Registry.Get` passes through, unwrapped, whatever the underlying layers
+report — matching on the standard library types is the reliable pattern:
+
+| Failure | Error at `Get` |
+| --- | --- |
+| Missing or unreadable template file | the raw `fs` error (`*fs.PathError` from `fs.ReadFile`) |
+| Malformed template syntax | `html/template`'s parse error |
+| Unregistered template function | `html/template`'s "function X not defined" parse error |
+| Missing field, validation enabled | `*templator.ValidationError` |
+
+## Quick identification cookbook
+
+```go
+// rendering:
+err := handler.Execute(ctx, w, data)
+var execErr templator.ErrTemplateExecution
+switch {
+case errors.As(err, &execErr) && errors.Is(execErr.Err, context.Canceled):
+	// context canceled
+case errors.As(err, &execErr) && errors.Is(execErr.Err, templator.ErrNilContext):
+	// nil ctx bug upstream
+case errors.As(err, &execErr):
+	// genuine render error — inspect execErr.Err
+}
+
+// loading:
+_, err = reg.Get("home")
+var vErr *templator.ValidationError
+if errors.As(err, &vErr) {
+	// enable-and-fix: the template names a field T does not have
+}
+// everything else: fs or parse errors, as above
+```

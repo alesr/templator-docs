@@ -1,0 +1,118 @@
+---
+title: Registry and handlers
+description: How Registry loads and caches templates, what Handler guarantees, and the exact context-cancellation semantics of Execute.
+---
+
+Two types carry the library: `Registry[T]` finds, validates, parses, and
+caches templates; `Handler[T]` renders one template with data of type `T`.
+This page documents their lifecycle and the precise `Execute` semantics.
+
+## Registry: lazy, cached, concurrent-safe
+
+```go
+reg, err := templator.NewRegistry[HomeData](fsys, opts...)
+handler, err := reg.Get("home")
+```
+
+- `NewRegistry` only stores the filesystem and options. It is cheap and,
+  in the current implementation, never returns a non-nil error — failures
+  surface later, at `Get`. Treat the error defensively, but do not expect
+  it.
+- `Get(name)` is **lazy**: templates are read and parsed on first use, not at
+  construction. You pay for what you render.
+- Handlers are **cached by name**. The second `Get("home")` returns the same
+  parsed handler without touching the filesystem. A template is therefore
+  parsed exactly once per registry — valuable because parsing is the
+  expensive part of `html/template`.
+- The cache is guarded by an `RWMutex` with double-checked locking, so
+  concurrent `Get` calls are safe, and only one parse happens per template
+  even under parallel load.
+
+Because templates are re-read only on a new `Registry`, process-lifetime
+template changes require rebuilding the registry (or, in tests, a fresh
+in-memory filesystem).
+
+## Template names and directories
+
+`Get("home")` reads `<templates-path>/home.html` from the registry's
+filesystem — templator appends the `.html` extension for you (constant
+`ExtensionHTML`). Nested directories are part of the name:
+
+```go
+h, err := reg.Get("components/header") // reads <path>/components/header.html
+```
+
+The default path is `"templates"` (`DefaultTemplateDir`); change it with
+`WithTemplatesPath`:
+
+```go
+reg, _ := templator.NewRegistry[PageData](
+	fsys,
+	templator.WithTemplatesPath[PageData]("views"),
+)
+```
+
+Note that the path is resolved inside the `fs.FS` you provide, not the host
+OS — see [Filesystems](/templator-docs/concepts/filesystems/).
+
+## Handler and Execute
+
+```go
+func (h *Handler[T]) Execute(ctx context.Context, w io.Writer, data T) error
+```
+
+`Execute` wraps `html/template`'s write path with context awareness:
+
+1. `ctx == nil` is rejected with
+   `ErrTemplateExecution{Name, Err: ErrNilContext}`.
+2. Every write goes through a writer that first checks `ctx.Err()`: a
+   canceled context stops rendering at the next write boundary.
+3. After rendering, `ctx.Err()` is checked once more, so a context that
+   expires during a render fails the call even if all writes succeeded.
+
+Returned errors are always `ErrTemplateExecution{Name, Err}` — the template
+name plus the underlying cause, which unwraps with `errors.Is` and
+`errors.As` ([Errors](/templator-docs/reference/errors/)):
+
+```go
+err := home.Execute(ctx, w, HomeData{Title: "Hi"})
+if err != nil {
+	var execErr templator.ErrTemplateExecution
+	if errors.As(err, &execErr) && errors.Is(execErr.Err, context.Canceled) {
+		// client went away mid-render
+	}
+}
+```
+
+## Two caveats worth knowing
+
+- **Cancellation is best-effort at write boundaries.** Between writes, and
+  for zero-length renders, rendering is not interrupted. A canceled context
+  can therefore still mean a template started writing before it failed —
+  headers may already be sent. Plan your HTTP handling accordingly.
+- **Escape and reparse.** `html/template` escapes values contextually inside
+  a rendered page; templator inherits that behavior unchanged.
+
+## Serving HTTP
+
+`Execute` takes `io.Writer` and `context.Context`, so a handler is a
+one-liner, and client disconnects propagate naturally through
+`r.Context()`:
+
+```go
+func homeHandler(reg *templator.Registry[HomeData]) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		home, err := reg.Get("home")
+		if err != nil {
+			http.Error(w, "template error", http.StatusInternalServerError)
+			return
+		}
+		if err := home.Execute(r.Context(), w, HomeData{Title: "Welcome"}); err != nil {
+			log.Printf("render: %v", err)
+		}
+	}
+}
+```
+
+One registry is safe to share across requests; create it once, not per
+request, to benefit from the parse cache.

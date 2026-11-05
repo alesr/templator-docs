@@ -1,0 +1,96 @@
+---
+title: Filesystems
+description: Registry reads templates through io/fs — from disk with os.DirFS, from the binary with embed.FS, or in-memory with fstest.MapFS.
+---
+
+A registry holds an `fs.FS`, and every template lookup is a read against
+that filesystem. This single design choice drives all the conveniences
+below — and it means templator never touches your host filesystem directly.
+
+## The path inside the FS
+
+`Get("components/header")` reads
+`<templates-path>/components/header.html` **inside the registry's `fs.FS`**.
+The default path is `templates`; override it with `WithTemplatesPath`:
+
+```go
+reg, _ := templator.NewRegistry[PageData](
+	fsys,
+	templator.WithTemplatesPath[PageData]("views"),
+)
+```
+
+Keep in mind that `embed.FS` roots are the package directory, and
+`os.DirFS(dir)` roots are `dir` — the same `templates/home.html` file is
+addressed as `"templates/home.html"` from one and `"home.html"` from the
+other.
+
+## The three filesystems you will actually use
+
+### Disk — os.DirFS
+
+The zero-config setup from the [Quickstart](/templator-docs/quickstart/).
+Templates are separate files you can edit and reload by rebuilding the
+registry:
+
+```go
+fs := os.DirFS(".")
+reg, _ := templator.NewRegistry[HomeData](fs)
+```
+
+Good for servers deployed alongside their templates and for local
+development.
+
+### The binary — embed.FS
+
+Templates shipped inside a single binary. Deploy one file; nothing to
+forget:
+
+```go
+import "embed"
+
+//go:embed templates
+var templateFS embed.FS
+
+reg, _ := templator.NewRegistry[HomeData](templateFS)
+```
+
+Embedding the directory (as above) includes its files recursively. Since
+`embed.FS` is rooted at the declaring package, the registry also needs the
+path adjusted:
+
+```go
+reg, _ := templator.NewRegistry[HomeData](
+	templateFS,
+	templator.WithTemplatesPath[HomeData]("templates"),
+)
+```
+
+### Memory — fstest.MapFS
+
+The test harness. Templates are declared as data, so tests define exactly
+what each case needs — no fixture directories, no I/O:
+
+```go
+fsys := fstest.MapFS{
+	"templates/home.html": &fstest.MapFile{
+		Data: []byte(`<h1>{{.Title}}</h1>`),
+	},
+}
+reg, _ := templator.NewRegistry[HomeData](fsys)
+```
+
+Full worked tests are in [Test templates](/templator-docs/guides/testing-templates/).
+
+## What the fs.FS boundary buys you
+
+- **Testability without fixtures.** Site templates, malformed templates, and
+  nested-layout cases are interchangeable data, not files on disk.
+- **Test data fidelity.** `fstest.MapFS` errors match what real filesystems
+  return, so your error-path tests behave like production.
+- **No hidden state.** The registry reads nothing outside the filesystem you
+  hand it. It keeps no goroutines, watchers, or caches beyond the parsed
+  handlers, so lifecycles are simple: keep the registry for the life of the
+  app, drop it to force a re-parse.
+- **Modularity.** Any `fs.FS`-shaped thing works: a sub-FS (`fs.Sub`), a
+  read-only overlay, or your own wrapper.

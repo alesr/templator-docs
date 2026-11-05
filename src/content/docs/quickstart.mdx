@@ -1,0 +1,110 @@
+---
+title: Quickstart
+description: Install templator, render your first type-safe template in under a minute, and know where to go next.
+---
+
+In this quickstart you render `templates/home.html` with data that is checked
+by the compiler. Every line below is the complete, real API.
+
+## Requirements
+
+- Go 1.26 or newer (the version declared in templator's `go.mod`).
+
+## 1. Install
+
+```sh
+go get github.com/alesr/templator@latest
+```
+
+The optional accessor generator is a separate binary, installed on demand in
+[Generate typed accessors](/templator-docs/guides/code-generation/).
+
+## 2. Create the template
+
+```text
+templates/
+  home.html
+```
+
+```html
+<h1>{{.Title}}</h1>
+<p>{{.Content}}</p>
+```
+
+The directory `templates` is the default location (constant
+`templator.DefaultTemplateDir`). You can point the registry elsewhere with
+`WithTemplatesPath`.
+
+## 3. Define the data type
+
+This struct is the contract for every template in your registry:
+
+```go
+type HomeData struct {
+    Title   string
+    Content string
+}
+```
+
+## 4. Render it
+
+```go
+package main
+
+import (
+	"context"
+	"log"
+	"os"
+
+	"github.com/alesr/templator"
+)
+
+func main() {
+	fs := os.DirFS(".")
+
+	reg, err := templator.NewRegistry[HomeData](fs)
+	if err != nil {
+		log.Fatal(err) // never returns an error today; see the API reference
+	}
+
+	home, err := reg.Get("home")
+	if err != nil {
+		log.Fatal(err) // template file missing or unparsable
+	}
+
+	err = home.Execute(context.Background(), os.Stdout, HomeData{
+		Title:   "Welcome",
+		Content: "Hello, World!",
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+```
+
+Run it:
+
+```text
+<h1>Welcome</h1>
+<p>Hello, World!</p>
+```
+
+Now try passing the wrong data type to `Execute`:
+
+```go
+home.Execute(ctx, w, AboutData{Company: "acme"}) // does not compile
+```
+
+That is the whole idea: `html/template` would fail on this at runtime;
+templator moves the failure to `go build`.
+
+## Where to go next
+
+- [The type-safety model](/templator-docs/concepts/type-safety/) — what the
+  compiler checks and what it does not.
+- [Registry and handlers](/templator-docs/concepts/registry-and-handlers/) —
+  caching, concurrency, and context cancellation.
+- [Test templates](/templator-docs/guides/testing-templates/) — the full
+  example with an in-memory filesystem.
+- [API reference](/templator-docs/reference/api/) — every type, option, and
+  signature.

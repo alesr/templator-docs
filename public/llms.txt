@@ -1,0 +1,29 @@
+# templator documentation
+
+templator is a type-safe HTML template rendering engine for Go. It wraps the
+standard `html/template` package with a generic `Registry[T]`/`Handler[T]` API
+so that the data you pass to a template is checked by the compiler, with
+optional load-time field validation and a `go:generate` accessor generator.
+
+Docs site: https://stdout.alesr.me/templator-docs/
+Library repository: https://github.com/alesr/templator
+
+## Pages
+
+- Quickstart: https://stdout.alesr.me/templator-docs/quickstart/
+- Concepts:
+  - The type-safety model: https://stdout.alesr.me/templator-docs/concepts/type-safety/
+  - Registry and handlers: https://stdout.alesr.me/templator-docs/concepts/registry-and-handlers/
+  - Field validation: https://stdout.alesr.me/templator-docs/concepts/field-validation/
+  - Filesystems: https://stdout.alesr.me/templator-docs/concepts/filesystems/
+- How-to guides:
+  - Custom template functions: https://stdout.alesr.me/templator-docs/guides/custom-functions/
+  - Test templates: https://stdout.alesr.me/templator-docs/guides/testing-templates/
+  - Generate typed accessors: https://stdout.alesr.me/templator-docs/guides/code-generation/
+- Reference:
+  - API: https://stdout.alesr.me/templator-docs/reference/api/
+  - Generator CLI: https://stdout.alesr.me/templator-docs/reference/generator/
+  - Errors: https://stdout.alesr.me/templator-docs/reference/errors/
+- Project:
+  - Contributing: https://stdout.alesr.me/templator-docs/project/contributing/
+  - FAQ and troubleshooting: https://stdout.alesr.me/templator-docs/project/faq/

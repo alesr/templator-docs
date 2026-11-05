@@ -1,0 +1,67 @@
+---
+title: Contributing
+description: How the templator project is organized, how to run its tests, and how to propose changes to the library and to these docs.
+---
+
+templator is a small, deliberately boring library: the standard library
+plus generics. Contributions that keep it that way are welcome.
+
+## Project layout
+
+The source repository is
+[github.com/alesr/templator](https://github.com/alesr/templator):
+
+```text
+templator.go             Registry, Handler, options, Execute
+errors.go                ErrTemplateExecution, ErrTemplateNotFound
+template_validator.go    field validation (WithFieldValidation)
+cmd/generate/            the accessor generator CLI
+example_test.go          the runnable godoc example
+```
+
+## Development
+
+- Go 1.26+ (declared in `go.mod`).
+- The core library depends only on the standard library; `golang.org/x/text`
+  is used by `cmd/generate` for title-casing.
+- Run the gates before submitting:
+
+```sh
+gofmt -l .
+go vet ./...
+go test -race ./...
+```
+
+The test suite covers the parse cache, concurrency (`-race` is part of the
+standard run), context cancellation boundaries, field validation, and the
+generator. Add or update tests alongside any behavior change you propose.
+
+## Propositions that need a discussion first
+
+Per the project's design bar, raise these in an issue before investing in a
+pull request:
+
+- New options on `NewRegistry` — each option is permanent API surface.
+- Removal or semantic change of an existing error type, such as
+  `ErrTemplateNotFound`.
+- Non-trivial reuse in `cmd/generate`'s output template — generated files
+  exist in user repos, so backward compatibility matters.
+
+## Documentation changes
+
+These docs live in a separate repository,
+[alesr/templator-docs](https://github.com/alesr/templator-docs) (this
+site), deployed to [stdout.alesr.me/templator-docs](https://stdout.alesr.me/templator-docs/) on every push
+to `main`. There is no drift check against the Go sources because the two
+repositories are independent — when you change the templator API in a pull
+request, open the matching docs change here in the same effort.
+
+Local preview of this site:
+
+```sh
+npm ci
+npm run dev
+```
+
+`npm run build` also runs the link validator, which fails the build on
+broken internal links, so CI catches dead cross-references.

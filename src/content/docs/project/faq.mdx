@@ -1,0 +1,93 @@
+---
+title: FAQ and troubleshooting
+description: Answers to practical questions about templator — layout composition, escaping, performance, HTTP serving, and what the library deliberately is not.
+---
+
+Answers to the questions that come up in practice. Each one reflects the
+actual implementation; where a limitation exists, it is stated rather than
+papered over.
+
+## Is this a new template language?
+
+No. templator is a thin wrapper around `html/template`. Templates are
+plain `.html` files with standard `{{...}}` syntax, contextual
+auto-escaping works unchanged, and everything you know about
+`html/template` applies. The wrapper contributes the type-safe data layer
+([the type-safety model](/templator-docs/concepts/type-safety/)), the
+registry lifecycle, and validation.
+
+## How do I share layouts or partials across files?
+
+Not across files — each template is parsed standalone
+(`template.New(name).Parse(content)`), so `{{template "partial.html"}}`
+cannot resolve to a definition in another file, and cross-file includes
+will fail at render time. What works:
+
+- Same-file composition: `{{define "part"}}...{{end}}` plus
+  `{{template "part"}}` inside one template file is fine.
+- Handler-level composition: render a partial into an `io.Pipe` (or buffer)
+  and pass it into your page data as ordinary data.
+
+A broader layout mechanism would need explicit associations between
+templates, which the current `Registry.Get` model does not define. If
+layouts are a big part of your app, factor them into your `Handler` usage
+rather than waiting for a feature here.
+
+## Can templator serve HTTP routes directly?
+
+There is no router — by design, `Execute(ctx, w, data)` maps onto
+`http.HandlerFunc` in one line, as shown in [Registry and
+handlers](/templator-docs/concepts/registry-and-handlers/). Compose it
+with `net/http`, `http.ServeMux` patterns, or any middleware chain of your
+choice.
+
+## Is rendering concurrent-safe and fast?
+
+Yes. Handlers are parsed once per registry, guarded by a mutex with
+double-checked locking, and rendering adds no locks at all — concurrent
+`Execute` calls run in parallel, since `html/template` itself supports
+concurrent execution of parsed templates. The measured overhead of templator
+is one `Write` wrapper per write, plus context checks. For throughput
+design, one registry for the process lifetime + per-request `Execute` is
+the pattern; per-request `NewRegistry` would forfeit the parse cache.
+
+## What happens when the render dies halfway?
+
+Two guarantees and one caveat. Guaranteed: the error is
+`ErrTemplateExecution` with the template name and cause, and the context is
+re-checked after rendering. The caveat: cancellation is checked at write
+boundaries, so some output may already have been written when the call
+fails — an HTTP response may have flushed bytes. Long templates render too
+fast for this to matter in practice; if cancellation responsiveness is
+critical for your workload, keep templates small or chunk writes
+deliberately.
+
+## I got an error at Get, not at Execute. Is that expected?
+
+Yes — lazy loading. `NewRegistry` performs no I/O; each template is read,
+validated, and parsed at first `Get`. A parse error, a missing file, or a
+validation failure therefore surfaces at `Get` calls, which typically
+happen at startup or first render — see [Errors](/templator-docs/reference/errors/).
+
+## Why does validation miss my field reference?
+
+The validator deliberately checks three shapes only:
+`{{.Field}}`, `{{ .A.B }}`, and `{{if .Field}}`. References inside other
+actions — `{{range .Items}}`, pipelines such as `{{.Title | upper}}`, and
+includes — are not extracted, and a template containing only those shapes
+passes validation unhindered. This keeps validation free of false
+positives at the cost of full coverage; the exact list is in [Field
+validation](/templator-docs/concepts/field-validation/).
+
+## Can I use one data type for all templates?
+
+You can, but the type system will not help you any more than plain
+html/template would. The intended split is one registry per data shape —
+`HomeData`, `AboutData` — so each template's contract is its own type.
+That is exactly what the compile-time guarantee is for.
+
+## Where do I report bugs?
+
+In the [templator issue tracker](https://github.com/alesr/templator/issues).
+For docs problems, open an issue on
+[templator-docs](https://github.com/alesr/templator-docs) instead.

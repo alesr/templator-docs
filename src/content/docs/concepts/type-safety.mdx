@@ -1,0 +1,107 @@
+---
+title: The type-safety model
+description: What templator checks at compile time, what stays at runtime, and how the optional field validation bridges the gap.
+---
+
+templator's guarantee is about the **data**, not the template body. This page
+draws that line precisely, because knowing where it falls is what makes the
+library predictable.
+
+## The problem with plain html/template
+
+Go's `html/template` takes the data as `any`. It is fast, safe, and
+battle-tested, but the contract between a template and its data lives in your
+head:
+
+```go
+tmpl := template.Must(template.ParseFiles("home.html"))
+
+// compiles fine; fails only when a user opens the page
+err := tmpl.Execute(w, struct {
+	WrongField string
+}{})
+```
+
+A missing field, a typo (`{{.Ttile}}`), or a swapped type surfaces as a
+runtime error during rendering — often in production.
+
+## What templator moves to compile time
+
+A registry is bound to exactly one data type via generics:
+
+```go
+type HomeData struct {
+	Title   string
+	Content string
+}
+
+type AboutData struct {
+	Company string
+	Year    int
+}
+
+homeReg, _ := templator.NewRegistry[HomeData](fs)
+aboutReg, _ := templator.NewRegistry[AboutData](fs)
+
+home, _ := homeReg.Get("home")
+about, _ := aboutReg.Get("about")
+
+home.Execute(ctx, w, HomeData{Title: "Hi"})    // ok
+about.Execute(ctx, w, AboutData{Company: "acme"}) // ok
+home.Execute(ctx, w, AboutData{Company: "acme"})   // does not compile
+```
+
+`Handler[T].Execute(ctx, w, data)` accepts only `T`. The wrong type is a
+compile error — for you, for your teammates, and for any AI agent writing
+code against your templates.
+
+Different data shapes means different registries, one per data type. In
+practice a small app has one or two; each template renders against the struct
+that fits it.
+
+## What stays at runtime — and how to narrow it
+
+Two categories of errors remain dynamic:
+
+1. **Template body errors.** Unknown fields referenced in the template
+   (`{{.Autor}}` in a template rendered with a struct that has no `Autor`),
+   and syntax errors. These fail when the template loads or executes.
+2. **Late-bound behavior.** Context cancellation during rendering
+   ([Registry and handlers](/templator-docs/concepts/registry-and-handlers/)
+   describes the exact boundaries).
+
+For the first category, templator ships an opt-in net:
+`WithFieldValidation`. Enable it and, at load time, templator statically
+extracts the field references from the template and checks each one against
+the data type:
+
+```go
+reg, err := templator.NewRegistry[ArticleData](
+	fs,
+	templator.WithFieldValidation(ArticleData{}),
+)
+
+_, err = reg.Get("article")
+// err is *templator.ValidationError if the template references
+// a field like {{.Author}} that ArticleData does not define
+```
+
+Validation runs once per template, when it is first loaded — so it catches
+mismatches at startup or first render instead of mid-page in production. It
+covers whole-action field references like `{{.Title}}`, `{{ .User.Name }}`,
+and `{{if .User.Admin}}`. It is a deliberately narrow, low-false-positive
+check; the exact coverage and its limits are in
+[Field validation](/templator-docs/concepts/field-validation/).
+
+## The hierarchy of safety
+
+| Error class | Without templator | templator | templator + validation |
+| --- | --- | --- | --- |
+| Wrong data type passed to a template | runtime | **compile time** | compile time |
+| Template references an undefined field | runtime | runtime | **load time** |
+| Broken template syntax | runtime | runtime (parse error at `Get`) | runtime (parse error at `Get`) |
+| Missing template file | runtime | runtime (read error at `Get`), early and explicit | same |
+
+templator does not change the template language, so errors that `html/template`
+can only find while rendering stay dynamic. What it eliminates is the class of
+errors that leaves your editor in the first place.

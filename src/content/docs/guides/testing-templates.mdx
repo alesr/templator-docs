@@ -1,0 +1,157 @@
+---
+title: Test templates
+description: Render real output with fstest.MapFS, assert on validated loads, and test context-cancellation with errors.Is.
+---
+
+templator's `fs.FS` interface makes template tests pure: define the
+filesystem, the data, and the expectation. This page shows the three tests
+every template suite benefits from — output, load failures, and
+cancellation — using the same in-memory filesystem the library's own
+example uses.
+
+## A complete rendering test
+
+```go
+package app_test
+
+import (
+	"bytes"
+	"context"
+	"testing"
+	"testing/fstest"
+
+	"github.com/alesr/templator"
+)
+
+type TestData struct {
+	Title   string
+	Content string
+}
+
+func TestRenderHome(t *testing.T) {
+	fsys := fstest.MapFS{
+		"templates/home.html": &fstest.MapFile{
+			Data: []byte(`<h1>{{.Title}}</h1><p>{{.Content}}</p>`),
+		},
+		"templates/team.html": &fstest.MapFile{
+			Data: []byte(`<h2>{{.Title}}</h2><p>{{.Content}}</p>`),
+		},
+	}
+
+	reg, err := templator.NewRegistry[TestData](fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	home, err := reg.Get("home")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := home.Execute(context.Background(), &out, TestData{
+		Title:   "Welcome",
+		Content: "Hello, World!",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	want := `<h1>Welcome</h1><p>Hello, World!</p>`
+	if out.String() != want {
+		t.Errorf("got %q, want %q", out.String(), want)
+	}
+}
+```
+
+`fstest.MapFS` satisfies `fs.FS`, so the registry cannot tell the
+test apart from production. A fresh registry per test keeps the parse cache
+honest — the cached handler is never reused across cases by accident.
+
+## Load-time failures
+
+Load errors happen in `Get`, not in `NewRegistry`, and `Get` is where you
+assert them. With validation on, a template referencing a missing field
+fails immediately:
+
+```go
+fsys := fstest.MapFS{
+	"templates/broken.html": &fstest.MapFile{
+		Data: []byte(`{{.Author}}`), // TestData has no Author field
+	},
+}
+
+reg, _ := templator.NewRegistry[TestData](
+	fsys,
+	templator.WithFieldValidation(TestData{}),
+)
+
+_, err := reg.Get("broken")
+
+var vErr *templator.ValidationError
+if !errors.As(err, &vErr) || vErr.FieldPath != "Author" {
+	t.Errorf("got %v, want ValidationError for Author", err)
+}
+
+// missing files surface the underlying fs error:
+_, err = reg.Get("nonexistent")
+if err == nil {
+	t.Error("expected error for missing template")
+}
+```
+
+The pattern extends directly to parse errors: a template with invalid
+syntax — say a stray `{{end}}` — fails at `Get` with `html/template`'s
+parse error.
+
+## Cancellation behaves like the contract says
+
+`Execute` checks the context before and after rendering, plus around every
+write ([Registry and handlers](/templator-docs/concepts/registry-and-handlers/)
+has the full semantics). The test follows from that contract:
+
+```go
+ctx, cancel := context.WithCancel(context.Background())
+cancel() // cancel everything up front
+
+fsys := fstest.MapFS{
+	"templates/home.html": &fstest.MapFile{
+		Data: []byte(`<h1>{{.Title}}</h1>`),
+	},
+}
+reg, _ := templator.NewRegistry[TestData](fsys)
+home, _ := reg.Get("home")
+
+var out bytes.Buffer
+err := home.Execute(ctx, &out, TestData{Title: "x"})
+
+var execErr templator.ErrTemplateExecution
+if !errors.As(err, &execErr) || !errors.Is(execErr.Err, context.Canceled) {
+	t.Errorf("got %v, want ErrTemplateExecution wrapping context.Canceled", err)
+}
+```
+
+Suppose instead you want the template to fail mid-render rather than before
+it starts: a canceled-at-entry context fails `Execute` before any write,
+while a context canceled by the test goroutine after the first write fails
+at the next boundary. Both are the same error class, so the `errors.As` +
+`errors.Is` pair above covers both variants as well.
+
+For richer coverage, remember that a context carrying a deadline has
+`ctx.Err()` equal to `context.DeadlineExceeded` — assert that value instead
+when that is the case under test.
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 0)
+defer cancel()
+err := home.Execute(ctx, io.Discard, TestData{Title: "x"})
+// execErr.Err == context.DeadlineExceeded
+```
+
+## What not to test
+
+- **`NewRegistry` failing.** It returns a nil error today; asserting on it
+  in application tests only couples you to internals.
+- **Private helpers of the library.** Your tests should treat templator as
+  a black box: filesystem in, rendered output or typed error out. The
+  library's own suite covers caching and concurrency (`-race`); your suite
+  should cover your templates and your data types.

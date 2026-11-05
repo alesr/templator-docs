@@ -1,0 +1,119 @@
+---
+title: API reference
+description: Every exported type, function, option, and constant in github.com/alesr/templator with exact signatures and semantics.
+---
+
+The complete public surface of `github.com/alesr/templator`. The library
+module declares Go 1.26.
+
+## Types
+
+### Registry
+
+```go
+type Registry[T any] struct { /* unexported fields */ }
+```
+
+A concurrent-safe, lazily-loading collection of parsed templates bound to
+the data type `T`. Created by `NewRegistry`; templates are read, validated,
+and parsed on first `Get` and cached by name. See [Registry and
+handlers](/templator-docs/concepts/registry-and-handlers/) for lifecycle
+details.
+
+```go
+func (r *Registry[T]) Get(name string) (*Handler[T], error)
+```
+
+Loads (or returns the cached) handler for the template named `name`. The
+file read is `<templates-path>/<name>.html` inside the registry's `fs.FS`;
+`.html` is appended automatically. Errors: the underlying `fs` error if the
+file is missing or unreadable, a `*ValidationError` if field validation is
+enabled and fails (before parsing), or the `html/template` parse error for
+malformed template syntax. All lookups are cached on success, so a template
+parses at most once per registry.
+
+### Handler
+
+```go
+type Handler[T any] struct { /* unexported fields */ }
+
+func (h *Handler[T]) Execute(ctx context.Context, w io.Writer, data T) error
+```
+
+Renders one parsed template with data of type `T` — the type-safe core of
+the library. Context semantics: `nil` ctx is rejected; `ctx.Err()` is
+checked before rendering (by proxy of the first write), on every write, and
+after rendering; cancellation is best-effort at write boundaries, so
+partial output may already be written when a canceled or expired context
+fails the call. Errors are always `ErrTemplateExecution{Name, Err}` — see
+[Errors](/templator-docs/reference/errors/).
+
+### Option
+
+```go
+type Option[T any] func(*Registry[T])
+```
+
+Configuration applied at `NewRegistry` time. Variadic; later options
+override earlier ones.
+
+### Constants and the Extension type
+
+```go
+const DefaultTemplateDir  = "templates"
+const DefaultTemplateExt  = "html"
+const ExtensionHTML       Extension = ".html"
+
+type Extension string
+```
+
+`DefaultTemplateDir` is the templates path used unless
+`WithTemplatesPath` overrides it. `DefaultTemplateExt` and `ExtensionHTML`
+describe file naming; `Get` appends `.html` to names.
+
+## Constructor
+
+```go
+func NewRegistry[T any](fsys fs.FS, opts ...Option[T]) (*Registry[T], error)
+```
+
+Returns a registry reading templates from `fsys` with `opts` applied. The
+error result is always `nil` in the current implementation — construction
+does no I/O; failures surface at `Get`. The signature keeps room for
+validation-at-construction without breaking the API.
+
+## Options
+
+```go
+func WithTemplatesPath[T any](path string) Option[T]
+```
+
+Sets the templates directory **inside the registry's filesystem** (not the
+host OS). An empty `path` is ignored, leaving the default (`"templates"`).
+
+```go
+func WithTemplateFuncs[T any](funcMap template.FuncMap) Option[T]
+```
+
+Registers template functions for every template loaded by this registry.
+Unknown function names fail template parsing at `Get` time. Usage examples
+in [Custom template functions](/templator-docs/guides/custom-functions/).
+
+```go
+func WithFieldValidation[T any](model T) Option[T]
+```
+
+Enables load-time checks that the fields referenced by a template
+(`{{.Field}}`, `{{ .A.B }}`, `{{if .Field}}`) exist in `T`. `model` supplies
+the type via the parameter; its value is unused. `T` must be a struct or a
+pointer to one. Full coverage description in [Field
+validation](/templator-docs/concepts/field-validation/).
+
+## Related pages
+
+- [Errors](/templator-docs/reference/errors/) — `ErrTemplateExecution`,
+  `ErrTemplateNotFound`, `ErrNilContext`, `ValidationError`.
+- [Generator CLI](/templator-docs/reference/generator/) — the
+  `cmd/generate` companion tool.
+- [FAQ](/templator-docs/project/faq/) — layout composition, HTTP serving,
+  and other practical questions.

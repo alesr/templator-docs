@@ -1,0 +1,70 @@
+---
+title: Custom template functions
+description: Register html/template FuncMap functions on a registry with WithTemplateFuncs and use them in your templates.
+---
+
+`html/template`'s function mechanism carries over unchanged: you hand the
+registry a `template.FuncMap` and every template you load through it can
+call those functions.
+
+## Register functions
+
+```go
+import (
+	"html/template"
+	"strings"
+
+	"github.com/alesr/templator"
+)
+
+funcMap := template.FuncMap{
+	"upper":    strings.ToUpper,
+	"nl2br":    func(s string) template.HTML { /* return pre-escaped HTML */ },
+}
+
+reg, err := templator.NewRegistry[PageData](
+	fsys,
+	templator.WithTemplateFuncs[PageData](funcMap),
+)
+```
+
+The type parameter on the option matters:
+
+```go
+templator.WithTemplateFuncs[PageData](funcMap) // Option[PageData]
+```
+
+A `template.FuncMap` function referenced but not registered fails when
+parsing a template that calls it, at the same `Get` call where parsing happens.
+
+## Use them in templates
+
+```html
+<h1>{{.Title | upper}}</h1>
+```
+
+Pipelines work exactly as `html/template` defines them, including
+multi-step pipelines and parameters:
+
+```html
+<time>{{.PublishedAt | formatDate "Jan 2, 2006"}}</time>
+```
+
+## Scope notes
+
+- **Functions are per-registry.** Every template loaded by that registry can
+  use them; templates of another registry cannot. Splitting apps with
+  different helper sets means different registries, which pairs naturally
+  with different data types anyway.
+- **Unknown function names fail at load time.** The function map is bound
+  when the template is parsed, so a template calling a function you never
+  registered makes the corresponding `Get` call fail with a parse error.
+  Errors *inside* a registered function surface later, at `Execute` time,
+  when the function actually runs.
+- **Escaping still applies.** Values produced by your functions are escaped
+  as usual. Return `template.HTML` only for trusted content, and document
+  that intent loudly at the definition site.
+- **Validation independence.** Custom functions do not interact with
+  [field validation](/templator-docs/concepts/field-validation/): a pipeline
+  like `{{.Title | upper}}` is not one of the validated shapes, so the field
+  reference inside it goes unchecked by the validator.
